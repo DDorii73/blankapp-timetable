@@ -25,6 +25,18 @@ default_periods = [
 if "periods" not in st.session_state:
     st.session_state["periods"] = default_periods.copy()
 
+# ---------- 캘린더 오류 해결: get_weekdays 함수 추가 ----------
+def get_weekdays(year, month):
+    cal = calendar.monthcalendar(year, month)
+    days = []
+    for week in cal:
+        for i, day in enumerate(week):
+            if day == 0:
+                continue
+            days.append({"day": day, "weekday": i})
+    return days
+# -------------------------------------------------------------
+
 # 시간표 수정 탭
 with st.expander("⏰ 시간표 수정/교시 추가/삭제"):
     periods = st.session_state["periods"]
@@ -64,17 +76,6 @@ def fixed_progress(progress, total):
         unsafe_allow_html=True
     )
 
-# 날짜 선택 (주말 비활성화 및 빨간색 표시)
-def get_weekdays(year, month):
-    cal = calendar.monthcalendar(year, month)
-    days = []
-    for week in cal:
-        for i, day in enumerate(week):
-            if day == 0:
-                continue
-            days.append({"day": day, "weekday": i})
-    return days
-
 st.title("🎈 오늘의 시간표")
 today = st.date_input("날짜를 선택하세요", datetime.now())
 year, month = today.year, today.month
@@ -87,13 +88,15 @@ for d in days:
     label = f"{d['day']}일({weekday_labels[d['weekday']]})"
     if d["weekday"] >= 5:
         label = f":red[{label}]"
-    selectable_days.append((label, d["day"], d["weekday"] < 5))
+    selectable_days.append({"label": label, "day": d["day"], "is_weekday": d["weekday"] < 5})
+
 # 평일만 선택 가능
-weekday_options = [label for label, day, is_weekday in selectable_days if is_weekday]
-weekday_values = [day for label, day, is_weekday in selectable_days if is_weekday]
+weekday_options = [d["label"] for d in selectable_days if d["is_weekday"]]
+weekday_values = [d["day"] for d in selectable_days if d["is_weekday"]]
 selected_day_idx = weekday_values.index(today.day) if today.day in weekday_values else 0
-selected_day = st.selectbox("날짜(주말은 선택 불가, 빨간색 표시)", weekday_options, index=selected_day_idx)
-today = datetime(year, month, int(selected_day))
+selected_day_label = st.selectbox("날짜(주말은 선택 불가, 빨간색 표시)", weekday_options, index=selected_day_idx)
+selected_day = weekday_values[weekday_options.index(selected_day_label)]
+today = datetime(year, month, selected_day)
 
 # 세션 상태 초기화
 if "timetable" not in st.session_state:
