@@ -109,7 +109,7 @@ for idx, period in enumerate(periods):
         if done:
             progress += 1
     with col5:
-        st.markdown("교사 싸인")
+        st.markdown("교사 확인")
         st_canvas(
             key=f"sign_{idx}_{today}",
             height=60,
