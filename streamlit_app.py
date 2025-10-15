@@ -1,16 +1,17 @@
 import streamlit as st
-from datetime import datetime
+from datetime import datetime, timedelta
 from streamlit_drawable_canvas import st_canvas
+import calendar
 
-# 과목 리스트 (진로, 정보 추가)
+# 과목 리스트 (특수학급 명칭 변경)
 subjects = [
     "국어", "영어", "수학", "사회", "과학", "음악", "미술", "체육",
     "진로", "정보",
-    "특수학급(진로)", "특수학급(수학)", "특수학급(체육)", "특수학급(국어)", "특수학급(정보)"
+    "특수(진로)", "특수(수학)", "특수(체육)", "특수(국어)", "특수(정보)"
 ]
 
-# 시간표 정보
-periods = [
+# 기본 시간표 정보
+default_periods = [
     {"name": "1교시", "time": "09:00 ~ 09:45"},
     {"name": "2교시", "time": "09:55 ~ 10:40"},
     {"name": "3교시", "time": "10:50 ~ 11:35"},
@@ -20,9 +21,30 @@ periods = [
     {"name": "6교시", "time": "14:25 ~ 15:10"},
 ]
 
+# 세션 상태에 시간표 정보 저장
+if "periods" not in st.session_state:
+    st.session_state["periods"] = default_periods.copy()
+
+# 시간표 수정 탭
+with st.expander("⏰ 시간표 수정/교시 추가/삭제"):
+    periods = st.session_state["periods"]
+    for i, period in enumerate(periods):
+        col1, col2, col3 = st.columns([2, 3, 1])
+        with col1:
+            periods[i]["name"] = st.text_input(f"{i+1}교시 이름", period["name"], key=f"edit_name_{i}")
+        with col2:
+            periods[i]["time"] = st.text_input(f"{i+1}교시 시간", period["time"], key=f"edit_time_{i}")
+        with col3:
+            if st.button("삭제", key=f"delete_period_{i}") and len(periods) > 1:
+                periods.pop(i)
+                st.experimental_rerun()
+    if st.button("교시 추가"):
+        periods.append({"name": f"{len(periods)+1}교시", "time": "시간 입력"})
+    st.session_state["periods"] = periods
+
 # 준비물 기본값
 def get_default_supplies(subject):
-    if "특수학급" in subject:
+    if "특수" in subject:
         return []
     if subject == "체육":
         return ["체육복", "운동화"]
@@ -42,15 +64,43 @@ def fixed_progress(progress, total):
         unsafe_allow_html=True
     )
 
-# 날짜 선택
+# 날짜 선택 (주말 비활성화 및 빨간색 표시)
+def get_weekdays(year, month):
+    cal = calendar.monthcalendar(year, month)
+    days = []
+    for week in cal:
+        for i, day in enumerate(week):
+            if day == 0:
+                continue
+            days.append({"day": day, "weekday": i})
+    return days
+
 st.title("🎈 오늘의 시간표")
 today = st.date_input("날짜를 선택하세요", datetime.now())
+year, month = today.year, today.month
+days = get_weekdays(year, month)
+
+# 주말 비활성화용 옵션
+weekday_labels = ["월", "화", "수", "목", "금", "토", "일"]
+selectable_days = []
+for d in days:
+    label = f"{d['day']}일({weekday_labels[d['weekday']]})"
+    if d["weekday"] >= 5:
+        label = f":red[{label}]"
+    selectable_days.append((label, d["day"], d["weekday"] < 5))
+# 평일만 선택 가능
+weekday_options = [label for label, day, is_weekday in selectable_days if is_weekday]
+weekday_values = [day for label, day, is_weekday in selectable_days if is_weekday]
+selected_day_idx = weekday_values.index(today.day) if today.day in weekday_values else 0
+selected_day = st.selectbox("날짜(주말은 선택 불가, 빨간색 표시)", weekday_options, index=selected_day_idx)
+today = datetime(year, month, int(selected_day))
 
 # 세션 상태 초기화
 if "timetable" not in st.session_state:
     st.session_state["timetable"] = {}
 
-progress_steps = len([p for p in periods if p["name"] != "점심시간"]) + 1  # 6교시+점심
+periods = st.session_state["periods"]
+progress_steps = len([p for p in periods if p["name"] != "점심시간"])
 progress = 0
 
 # 시간표 입력
@@ -58,34 +108,22 @@ for idx, period in enumerate(periods):
     st.markdown(f"### {period['name']} ({period['time']})")
     col1, col2, col3, col4, col5 = st.columns([2,2,2,2,2])
 
-    # 점심시간 처리
+    # 점심시간 처리 (교사싸인 없음)
     if period["name"] == "점심시간":
         with col1:
-            lunch_eat = st.checkbox("🍱 식사", key=f"lunch_eat_{today}")
+            lunch_eat = st.checkbox("🍱 식사", key=f"lunch_eat_{today}_{idx}")
         with col2:
-            lunch_brush = st.checkbox("🪥 양치", key=f"lunch_brush_{today}")
+            lunch_brush = st.checkbox("🪥 양치", key=f"lunch_brush_{today}_{idx}")
         with col3:
-            lunch_done = st.checkbox("✅ 점심시간 완료", key=f"lunch_done_{today}")
+            lunch_done = st.checkbox("✅ 점심시간 완료", key=f"lunch_done_{today}_{idx}")
         if lunch_eat and lunch_brush and lunch_done:
             progress += 1
-        # 싸인란
-        with col5:
-            st.markdown("교사 싸인")
-            st_canvas(
-                key=f"sign_lunch_{today}",
-                height=60,
-                width=150,
-                background_color="#fff",
-                drawing_mode="freedraw",
-                stroke_width=2,
-                stroke_color="#222",
-                update_streamlit=True,
-            )
         continue
 
     subject_key = f"subject_{idx}_{today}"
     done_key = f"done_{idx}_{today}"
     supplies_key = f"supplies_{idx}_{today}"
+    ready_key = f"ready_{idx}_{today}"
 
     with col1:
         subject = st.selectbox("과목 선택", subjects, key=subject_key)
@@ -100,12 +138,15 @@ for idx, period in enumerate(periods):
     if prev_subject != subject:
         st.session_state[supplies_key] = ", ".join(default_supplies)
         st.session_state["supplies_state"][subject_key] = subject
+
     with col3:
         supplies = st.text_input(
-            "준비물(콤마로 구분)", st.session_state.get(supplies_key, ", ".join(default_supplies)), key=supplies_key
+            "준비물", st.session_state.get(supplies_key, ", ".join(default_supplies)), key=supplies_key
         )
+        supplies_list = [s.strip() for s in supplies.split(",") if s.strip()]
+        ready = st.checkbox("준비물 완료", key=ready_key)
     with col4:
-        done = st.checkbox("✅ 수업 준비완료", key=done_key)
+        done = st.checkbox("수업 준비 완료", key=done_key)
         if done:
             progress += 1
     with col5:
@@ -121,11 +162,11 @@ for idx, period in enumerate(periods):
             update_streamlit=True,
         )
 
-    supplies_list = [s.strip() for s in supplies.split(",") if s.strip()]
     st.session_state["timetable"][f"{today}_{period['name']}"] = {
         "subject": subject,
         "place": place,
         "supplies": supplies_list,
+        "ready": ready,
         "done": done
     }
 
