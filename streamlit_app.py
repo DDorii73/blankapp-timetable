@@ -25,19 +25,7 @@ default_periods = [
 if "periods" not in st.session_state:
     st.session_state["periods"] = default_periods.copy()
 
-# ---------- 캘린더 오류 해결: get_weekdays 함수 추가 ----------
-def get_weekdays(year, month):
-    cal = calendar.monthcalendar(year, month)
-    days = []
-    for week in cal:
-        for i, day in enumerate(week):
-            if day == 0:
-                continue
-            days.append({"day": day, "weekday": i})
-    return days
-# -------------------------------------------------------------
-
-# 시간표 수정 탭
+# 시간표 수정 탭 (추가/삭제)
 with st.expander("⏰ 시간표 수정/교시 추가/삭제"):
     periods = st.session_state["periods"]
     for i, period in enumerate(periods):
@@ -54,13 +42,24 @@ with st.expander("⏰ 시간표 수정/교시 추가/삭제"):
         periods.append({"name": f"{len(periods)+1}교시", "time": "시간 입력"})
     st.session_state["periods"] = periods
 
-# 준비물 기본값
+# 준비물 기본값 함수 정의
 def get_default_supplies(subject):
     if "특수" in subject:
         return []
     if subject == "체육":
         return ["체육복", "운동화"]
     return ["교과서", "필기도구"]
+
+# 한글 요일
+weekday_labels = ["월", "화", "수", "목", "금", "토", "일"]
+
+# 날짜 선택(달력)
+selected_date = st.date_input("날짜를 선택하세요", datetime.now())
+year, month, day = selected_date.year, selected_date.month, selected_date.day
+weekday = selected_date.weekday()  # 0=월, 6=일
+
+# 선택한 날짜 정보만 표시
+st.markdown(f"#### {month}월 {day}일 {weekday_labels[weekday]}요일")
 
 # 진행도 표시 (항상 상단 고정)
 def fixed_progress(progress, total):
@@ -76,28 +75,6 @@ def fixed_progress(progress, total):
         unsafe_allow_html=True
     )
 
-st.title("오늘 나의 하루")
-today = st.date_input("날짜를 선택하세요", datetime.now())
-year, month = today.year, today.month
-days = get_weekdays(year, month)
-
-# 주말 비활성화용 옵션
-weekday_labels = ["월", "화", "수", "목", "금", "토", "일"]
-selectable_days = []
-for d in days:
-    label = f"{d['day']}일({weekday_labels[d['weekday']]})"
-    if d["weekday"] >= 5:
-        label = f":red[{label}]"
-    selectable_days.append({"label": label, "day": d["day"], "is_weekday": d["weekday"] < 5})
-
-# 평일만 선택 가능
-weekday_options = [d["label"] for d in selectable_days if d["is_weekday"]]
-weekday_values = [d["day"] for d in selectable_days if d["is_weekday"]]
-selected_day_idx = weekday_values.index(today.day) if today.day in weekday_values else 0
-selected_day_label = st.selectbox("날짜(주말은 선택 불가, 빨간색 표시)", weekday_options, index=selected_day_idx)
-selected_day = weekday_values[weekday_options.index(selected_day_label)]
-today = datetime(year, month, selected_day)
-
 # 세션 상태 초기화
 if "timetable" not in st.session_state:
     st.session_state["timetable"] = {}
@@ -108,38 +85,32 @@ progress = 0
 
 # 시간표 입력
 for idx, period in enumerate(periods):
-    # 모든 교시 입력 전체를 하나의 테두리 박스로 묶음
-    st.markdown(
-        """
-        <div style="border:2px solid #1976d2; border-radius:14px; padding:22px; margin-bottom:22px; background:#f4f8fb;">
-        """,
-        unsafe_allow_html=True
-    )
     st.markdown(f"### {period['name']} ({period['time']})")
     col1, col2, col3, col4, col5 = st.columns([2,2,2,2,2])
 
     # 점심시간 처리 (교사싸인 없음)
     if period["name"] == "점심시간":
         with col1:
-            lunch_eat = st.checkbox("🍱 식사", key=f"lunch_eat_{today}_{idx}")
+            lunch_eat = st.checkbox("🍱 식사", key=f"lunch_eat_{selected_date}_{idx}")
         with col2:
-            lunch_brush = st.checkbox("🪥 양치", key=f"lunch_brush_{today}_{idx}")
+            lunch_brush = st.checkbox("🪥 양치", key=f"lunch_brush_{selected_date}_{idx}")
         with col3:
-            lunch_done = st.checkbox("✅ 점심시간 완료", key=f"lunch_done_{today}_{idx}")
+            lunch_done = st.checkbox("✅ 점심시간 완료", key=f"lunch_done_{selected_date}_{idx}")
         if lunch_eat and lunch_brush and lunch_done:
             progress += 1
-        st.markdown("</div>", unsafe_allow_html=True)
+        # 점선 구분선
+        st.markdown('<hr style="border-top: 2px dashed #bbb;">', unsafe_allow_html=True)
         continue
 
-    subject_key = f"subject_{idx}_{today}"
-    done_key = f"done_{idx}_{today}"
-    supplies_key = f"supplies_{idx}_{today}"
-    ready_key = f"ready_{idx}_{today}"
+    subject_key = f"subject_{idx}_{selected_date}"
+    done_key = f"done_{idx}_{selected_date}"
+    supplies_key = f"supplies_{idx}_{selected_date}"
+    ready_key = f"ready_{idx}_{selected_date}"
 
     with col1:
         subject = st.selectbox("과목 선택", subjects, key=subject_key)
     with col2:
-        place = st.text_input("장소 입력", key=f"place_{idx}_{today}")
+        place = st.text_input("장소 입력", key=f"place_{idx}_{selected_date}")
 
     # 준비물 동적 변경
     if "supplies_state" not in st.session_state:
@@ -163,7 +134,7 @@ for idx, period in enumerate(periods):
     with col5:
         st.markdown("교사 확인")
         st_canvas(
-            key=f"sign_{idx}_{today}",
+            key=f"sign_{idx}_{selected_date}",
             height=60,
             width=150,
             background_color="#fff",
@@ -173,19 +144,20 @@ for idx, period in enumerate(periods):
             update_streamlit=True,
         )
 
-    st.session_state["timetable"][f"{today}_{period['name']}"] = {
+    st.session_state["timetable"][f"{selected_date}_{period['name']}"] = {
         "subject": subject,
         "place": place,
         "supplies": supplies_list,
         "ready": ready,
         "done": done
     }
-    st.markdown("</div>", unsafe_allow_html=True)
+    # 점선 구분선
+    st.markdown('<hr style="border-top: 2px dashed #bbb;">', unsafe_allow_html=True)
 
 # 진행도(상단 고정)
 fixed_progress(progress, progress_steps)
 
 # 오늘 하루 코멘트
 st.markdown("### 오늘 하루는 어땠나요?")
-comment = st.text_area("", key=f"comment_{today}")
-st.session_state["timetable"][f"{today}_comment"] = comment
+comment = st.text_area("", key=f"comment_{selected_date}")
+st.session_state["timetable"][f"{selected_date}_comment"] = comment
