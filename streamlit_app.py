@@ -1,4 +1,3 @@
-
 import streamlit as st
 from datetime import datetime, timedelta
 from streamlit_drawable_canvas import st_canvas
@@ -77,7 +76,7 @@ def fixed_progress(progress, total):
         unsafe_allow_html=True
     )
 
-st.title("🎈 오늘의 시간표")
+st.title("오늘 나의 하루")
 today = st.date_input("날짜를 선택하세요", datetime.now())
 year, month = today.year, today.month
 days = get_weekdays(year, month)
@@ -109,6 +108,13 @@ progress = 0
 
 # 시간표 입력
 for idx, period in enumerate(periods):
+    # 모든 교시 입력 전체를 하나의 테두리 박스로 묶음
+    st.markdown(
+        """
+        <div style="border:2px solid #1976d2; border-radius:14px; padding:22px; margin-bottom:22px; background:#f4f8fb;">
+        """,
+        unsafe_allow_html=True
+    )
     st.markdown(f"### {period['name']} ({period['time']})")
     col1, col2, col3, col4, col5 = st.columns([2,2,2,2,2])
 
@@ -122,6 +128,7 @@ for idx, period in enumerate(periods):
             lunch_done = st.checkbox("✅ 점심시간 완료", key=f"lunch_done_{today}_{idx}")
         if lunch_eat and lunch_brush and lunch_done:
             progress += 1
+        st.markdown("</div>", unsafe_allow_html=True)
         continue
 
     subject_key = f"subject_{idx}_{today}"
@@ -173,11 +180,12 @@ for idx, period in enumerate(periods):
         "ready": ready,
         "done": done
     }
+    st.markdown("</div>", unsafe_allow_html=True)
 
 # 진행도(상단 고정)
 fixed_progress(progress, progress_steps)
 
 # 오늘 하루 코멘트
-st.markdown("### 오늘 하루 일과 코멘트")
-comment = st.text_area("코멘트를 남겨보세요! (이모티콘 입력 가능 😊)", key=f"comment_{today}")
+st.markdown("### 오늘 하루는 어땠나요?")
+comment = st.text_area("", key=f"comment_{today}")
 st.session_state["timetable"][f"{today}_comment"] = comment
