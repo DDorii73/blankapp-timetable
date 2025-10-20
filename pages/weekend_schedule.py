@@ -90,7 +90,7 @@ def render_tasks(section_label, state_key, prefix):
         with container:
             c_title, c_place, c_time, c_actions = st.columns([3,3,3,1])
 
-            # 일과명: 선택항목 제거, 텍스트 입력만 제공. placeholder로 회색 안내 표시
+            # 일과명: 보기(selectbox) 제거하고 바로 텍스트 입력으로 변경
             with c_title:
                 title_val = st.text_input(
                     "",  # 라벨은 위 헤더에서 처리
@@ -98,6 +98,7 @@ def render_tasks(section_label, state_key, prefix):
                     placeholder="어떤 계획이 있나요?",
                     key=f"title_{prefix}_{item_id}_{date_key}"
                 )
+                # 저장
                 for it in st.session_state[state_key]:
                     if it["id"] == item_id:
                         it["title"] = title_val
