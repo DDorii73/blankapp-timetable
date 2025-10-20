@@ -55,8 +55,10 @@ def get_default_supplies(subject):
 # 한글 요일
 weekday_labels = ["월", "화", "수", "목", "금", "토", "일"]
 
+# 제목 변경: '주말의 일과표'
+st.title("주말의 일과표")
+
 # 날짜 선택(달력)
-st.title("오늘의 시간표")
 selected_date = st.date_input("날짜를 선택하세요", datetime.now())
 year, month, day = selected_date.year, selected_date.month, selected_date.day
 weekday = selected_date.weekday()  # 0=월, 6=일
@@ -85,37 +87,33 @@ if "timetable" not in st.session_state:
     st.session_state["timetable"] = {}
 
 periods = st.session_state["periods"]
+
+# 오전/오후 분리: '점심시간'을 기준으로 나눔
+if any(p["name"] == "점심시간" for p in periods):
+    lunch_idx = next(i for i, p in enumerate(periods) if p["name"] == "점심시간")
+else:
+    lunch_idx = 4  # 기본값
+morning_periods = periods[:lunch_idx]
+afternoon_periods = periods[lunch_idx+1:]
+
 progress_steps = len([p for p in periods if p["name"] != "점심시간"])
 progress = 0
 
-# 시간표 입력
-for idx, period in enumerate(periods):
+st.markdown("## 오전 일정")
+for idx, period in enumerate(morning_periods):
     st.markdown(f"### {period['name']} ({period['time']})")
     col1, col2, col3, col4, col5 = st.columns([2,2,2,2,2])
 
-    # 점심시간 처리 (교사싸인 없음)
-    if period["name"] == "점심시간":
-        with col1:
-            lunch_eat = st.checkbox("🍱 식사", key=f"lunch_eat_{selected_date}_{idx}")
-        with col2:
-            lunch_brush = st.checkbox("🪥 양치", key=f"lunch_brush_{selected_date}_{idx}")
-        with col3:
-            lunch_done = st.checkbox("✅ 점심시간 완료", key=f"lunch_done_{selected_date}_{idx}")
-        if lunch_eat and lunch_brush and lunch_done:
-            progress += 1
-        # 점선 구분선
-        st.markdown('<hr style="border-top: 2px dashed #bbb;">', unsafe_allow_html=True)
-        continue
-
-    subject_key = f"subject_{idx}_{selected_date}"
-    done_key = f"done_{idx}_{selected_date}"
-    supplies_key = f"supplies_{idx}_{selected_date}"
-    ready_key = f"ready_{idx}_{selected_date}"
+    # 점심 전 교시 처리 (점심시간은 아닌 상태)
+    subject_key = f"subject_m_{idx}_{selected_date.isoformat()}"
+    done_key = f"done_m_{idx}_{selected_date.isoformat()}"
+    supplies_key = f"supplies_m_{idx}_{selected_date.isoformat()}"
+    ready_key = f"ready_m_{idx}_{selected_date.isoformat()}"
 
     with col1:
         subject = st.selectbox("과목 선택", subjects, key=subject_key)
     with col2:
-        place = st.text_input("장소 입력", key=f"place_{idx}_{selected_date}")
+        place = st.text_input("장소 입력", key=f"place_m_{idx}_{selected_date.isoformat()}")
 
     # 준비물 동적 변경
     if "supplies_state" not in st.session_state:
@@ -139,24 +137,20 @@ for idx, period in enumerate(periods):
     with col5:
         st.markdown("교사 확인")
 
-        # 안정적인 키: 날짜를 ISO 문자열로 변환해서 사용
-        date_key = selected_date.isoformat() if hasattr(selected_date, "isoformat") else str(selected_date)
-        sign_img_key = f"sign_img_{idx}_{date_key}"
-        sign_locked_key = f"sign_locked_{idx}_{date_key}"
-        canvas_key = f"sign_canvas_{idx}_{date_key}"
-        lock_icon_key = f"lock_icon_{idx}_{date_key}"
-        unlock_icon_key = f"unlock_icon_{idx}_{date_key}"
+        # 서명 캔버스 키 (ISO 날짜 문자열 사용)
+        date_key = selected_date.isoformat()
+        sign_img_key = f"sign_img_m_{idx}_{date_key}"
+        sign_locked_key = f"sign_locked_m_{idx}_{date_key}"
+        canvas_key = f"sign_canvas_m_{idx}_{date_key}"
+        lock_icon_key = f"lock_icon_m_{idx}_{date_key}"
+        unlock_icon_key = f"unlock_icon_m_{idx}_{date_key}"
 
-        # 초기값 보장
         if sign_locked_key not in st.session_state:
             st.session_state[sign_locked_key] = False
         if sign_img_key not in st.session_state:
             st.session_state[sign_img_key] = None
 
-        # 단일 블록: 캔버스 하나만 사용 (저장된 이미지는 캔버스의 background_image로 로드 시도)
         saved_img = st.session_state.get(sign_img_key)
-
-        # background_image로 전달할 bytes 준비 (PIL -> PNG bytes). 실패 시 None 처리
         bg_bytes = None
         if saved_img is not None:
             try:
@@ -167,7 +161,6 @@ for idx, period in enumerate(periods):
             except Exception:
                 bg_bytes = None
 
-        # 잠금 상태일 때: 저장된 이미지만 보여주고 편집 불가 (잠금 해제 아이콘)
         if st.session_state.get(sign_locked_key, False):
             if saved_img is not None:
                 st.image(saved_img, width=150)
@@ -176,21 +169,19 @@ for idx, period in enumerate(periods):
             if st.button("🔓", key=unlock_icon_key):
                 st.session_state[sign_locked_key] = False
         else:
-            # 잠금 해제 상태: 단일 캔버스 표시 (가능하면 background_image로 불러오기)
             try:
                 canvas_result = st_canvas(
                     key=canvas_key,
                     height=120,
                     width=300,
                     background_color="#ffffff",
-                    background_image=bg_bytes,  # bytes or None
+                    background_image=bg_bytes,
                     drawing_mode="freedraw",
                     stroke_width=2,
                     stroke_color="#222",
                     update_streamlit=True,
                 )
-            except Exception as e:
-                # background_image에 의해 에러가 나면 fallback: 캔버스 without background
+            except Exception:
                 canvas_result = st_canvas(
                     key=canvas_key + "_fb",
                     height=120,
@@ -202,11 +193,9 @@ for idx, period in enumerate(periods):
                     update_streamlit=True,
                 )
 
-            # 캔버스에서 이미지가 있으면 세션에 저장 (안전 변환)
             if canvas_result is not None and getattr(canvas_result, "image_data", None) is not None:
                 try:
                     arr = np.array(canvas_result.image_data)
-                    # float (0..1) -> uint8(0..255)
                     if np.issubdtype(arr.dtype, np.floating):
                         arr = (arr * 255).astype(np.uint8)
                     else:
@@ -217,7 +206,6 @@ for idx, period in enumerate(periods):
                     st.error("서명 이미지 변환에 실패했습니다.")
                     st.write(str(e))
 
-            # 잠금(아이콘) 버튼 — 서명이 있으면 한 번 누르면 바로 잠금
             if st.button("🔒", key=lock_icon_key):
                 if st.session_state.get(sign_img_key) is not None:
                     st.session_state[sign_locked_key] = True
@@ -231,7 +219,143 @@ for idx, period in enumerate(periods):
         "ready": ready,
         "done": done
     }
-    # 점선 구분선
+
+    st.markdown('<hr style="border-top: 2px dashed #bbb;">', unsafe_allow_html=True)
+
+# 점심시간 표시
+if lunch_idx < len(periods):
+    lunch = periods[lunch_idx]
+    st.markdown(f"### {lunch['name']} ({lunch['time']})")
+    col1, col2, col3 = st.columns(3)
+    with col1:
+        lunch_eat = st.checkbox("🍱 식사", key=f"lunch_eat_{selected_date.isoformat()}")
+    with col2:
+        lunch_brush = st.checkbox("🪥 양치", key=f"lunch_brush_{selected_date.isoformat()}")
+    with col3:
+        lunch_done = st.checkbox("✅ 점심시간 완료", key=f"lunch_done_{selected_date.isoformat()}")
+    if lunch_eat and lunch_brush and lunch_done:
+        progress += 1
+    st.markdown('<hr style="border-top: 2px dashed #bbb;">', unsafe_allow_html=True)
+
+st.markdown("## 오후 일정")
+for idx, period in enumerate(afternoon_periods):
+    st.markdown(f"### {period['name']} ({period['time']})")
+    col1, col2, col3, col4, col5 = st.columns([2,2,2,2,2])
+
+    subject_key = f"subject_a_{idx}_{selected_date.isoformat()}"
+    done_key = f"done_a_{idx}_{selected_date.isoformat()}"
+    supplies_key = f"supplies_a_{idx}_{selected_date.isoformat()}"
+    ready_key = f"ready_a_{idx}_{selected_date.isoformat()}"
+
+    with col1:
+        subject = st.selectbox("과목 선택", subjects, key=subject_key)
+    with col2:
+        place = st.text_input("장소 입력", key=f"place_a_{idx}_{selected_date.isoformat()}")
+
+    if "supplies_state" not in st.session_state:
+        st.session_state["supplies_state"] = {}
+    prev_subject = st.session_state["supplies_state"].get(subject_key, "")
+    default_supplies = get_default_supplies(subject)
+    if prev_subject != subject:
+        st.session_state[supplies_key] = ", ".join(default_supplies)
+        st.session_state["supplies_state"][subject_key] = subject
+
+    with col3:
+        supplies = st.text_input(
+            "준비물", st.session_state.get(supplies_key, ", ".join(default_supplies)), key=supplies_key
+        )
+        supplies_list = [s.strip() for s in supplies.split(",") if s.strip()]
+        ready = st.checkbox("준비물 완료", key=ready_key)
+    with col4:
+        done = st.checkbox("수업 준비 완료", key=done_key)
+        if done:
+            progress += 1
+    with col5:
+        st.markdown("교사 확인")
+
+        # 서명 캔버스 키 (ISO 날짜 문자열 사용)
+        date_key = selected_date.isoformat()
+        sign_img_key = f"sign_img_a_{idx}_{date_key}"
+        sign_locked_key = f"sign_locked_a_{idx}_{date_key}"
+        canvas_key = f"sign_canvas_a_{idx}_{date_key}"
+        lock_icon_key = f"lock_icon_a_{idx}_{date_key}"
+        unlock_icon_key = f"unlock_icon_a_{idx}_{date_key}"
+
+        if sign_locked_key not in st.session_state:
+            st.session_state[sign_locked_key] = False
+        if sign_img_key not in st.session_state:
+            st.session_state[sign_img_key] = None
+
+        saved_img = st.session_state.get(sign_img_key)
+        bg_bytes = None
+        if saved_img is not None:
+            try:
+                from io import BytesIO
+                buf = BytesIO()
+                saved_img.convert("RGBA").save(buf, format="PNG")
+                bg_bytes = buf.getvalue()
+            except Exception:
+                bg_bytes = None
+
+        if st.session_state.get(sign_locked_key, False):
+            if saved_img is not None:
+                st.image(saved_img, width=150)
+            else:
+                st.info("저장된 서명이 없습니다.")
+            if st.button("🔓", key=unlock_icon_key):
+                st.session_state[sign_locked_key] = False
+        else:
+            try:
+                canvas_result = st_canvas(
+                    key=canvas_key,
+                    height=120,
+                    width=300,
+                    background_color="#ffffff",
+                    background_image=bg_bytes,
+                    drawing_mode="freedraw",
+                    stroke_width=2,
+                    stroke_color="#222",
+                    update_streamlit=True,
+                )
+            except Exception:
+                canvas_result = st_canvas(
+                    key=canvas_key + "_fb",
+                    height=120,
+                    width=300,
+                    background_color="#ffffff",
+                    drawing_mode="freedraw",
+                    stroke_width=2,
+                    stroke_color="#222",
+                    update_streamlit=True,
+                )
+
+            if canvas_result is not None and getattr(canvas_result, "image_data", None) is not None:
+                try:
+                    arr = np.array(canvas_result.image_data)
+                    if np.issubdtype(arr.dtype, np.floating):
+                        arr = (arr * 255).astype(np.uint8)
+                    else:
+                        arr = arr.astype(np.uint8)
+                    pil_img = Image.fromarray(arr).convert("RGBA")
+                    st.session_state[sign_img_key] = pil_img
+                except Exception as e:
+                    st.error("서명 이미지 변환에 실패했습니다.")
+                    st.write(str(e))
+
+            if st.button("🔒", key=lock_icon_key):
+                if st.session_state.get(sign_img_key) is not None:
+                    st.session_state[sign_locked_key] = True
+                else:
+                    st.warning("먼저 서명을 그려주세요.")
+
+    st.session_state["timetable"][f"{selected_date}_{period['name']}"] = {
+        "subject": subject,
+        "place": place,
+        "supplies": supplies_list,
+        "ready": ready,
+        "done": done
+    }
+
     st.markdown('<hr style="border-top: 2px dashed #bbb;">', unsafe_allow_html=True)
 
 # 진행도(상단 고정)
