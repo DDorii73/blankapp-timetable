@@ -1,367 +1,122 @@
 import streamlit as st
-from datetime import datetime, timedelta
-from streamlit_drawable_canvas import st_canvas
-import calendar
-import numpy as np
-from PIL import Image
+from datetime import datetime, time, timedelta
+import uuid
 
-# 과목 리스트 (특수학급 명칭 변경)
-subjects = [
-    "국어", "영어", "수학", "사회", "과학", "음악", "미술", "체육",
-    "진로", "정보",
-    "특수(진로)", "특수(수학)", "특수(체육)", "특수(국어)", "특수(정보)"
-]
+# 제목
+st.title("주말 일과표")
 
-# 기본 시간표 정보
-default_periods = [
-    {"name": "1교시", "time": "09:00 ~ 09:45"},
-    {"name": "2교시", "time": "09:55 ~ 10:40"},
-    {"name": "3교시", "time": "10:50 ~ 11:35"},
-    {"name": "4교시", "time": "11:45 ~ 12:30"},
-    {"name": "점심시간", "time": "12:30 ~ 13:30"},
-    {"name": "5교시", "time": "13:30 ~ 14:15"},
-    {"name": "6교시", "time": "14:25 ~ 15:10"},
-]
-
-# 세션 상태에 시간표 정보 저장
-if "periods" not in st.session_state:
-    st.session_state["periods"] = default_periods.copy()
-
-# 시간표 수정 탭 (추가/삭제)
-with st.expander("⏰ 시간표 수정/교시 추가/삭제"):
-    periods = st.session_state["periods"]
-    for i, period in enumerate(periods):
-        col1, col2, col3 = st.columns([2, 3, 1])
-        with col1:
-            periods[i]["name"] = st.text_input(f"{i+1}교시 이름", period["name"], key=f"edit_name_{i}")
-        with col2:
-            periods[i]["time"] = st.text_input(f"{i+1}교시 시간", period["time"], key=f"edit_time_{i}")
-        with col3:
-            if st.button("삭제", key=f"delete_period_{i}") and len(periods) > 1:
-                periods.pop(i)
-                st.experimental_rerun()
-    if st.button("교시 추가"):
-        periods.append({"name": f"{len(periods)+1}교시", "time": "시간 입력"})
-    st.session_state["periods"] = periods
-
-# 준비물 기본값 함수 정의
-def get_default_supplies(subject):
-    if "특수" in subject:
-        return []
-    if subject == "체육":
-        return ["체육복", "운동화"]
-    return ["교과서", "필기도구"]
-
-# 한글 요일
-weekday_labels = ["월", "화", "수", "목", "금", "토", "일"]
-
-# 제목 변경: '주말의 일과표'
-st.title("주말의 일과표")
-
-# 날짜 선택(달력)
+# 날짜 선택 및 요일 표시
 selected_date = st.date_input("날짜를 선택하세요", datetime.now())
-year, month, day = selected_date.year, selected_date.month, selected_date.day
-weekday = selected_date.weekday()  # 0=월, 6=일
+date_key = selected_date.isoformat()
+weekday_labels = ["월", "화", "수", "목", "금", "토", "일"]
+st.markdown(f"#### {selected_date.month}월 {selected_date.day}일 {weekday_labels[selected_date.weekday()]}요일")
 
-# 선택한 날짜 정보만 표시
-st.markdown(f"#### {month}월 {day}일 {weekday_labels[weekday]}요일")
+# 세션키: 날짜별 오전/오후 리스트 유지 (각 항목에 고유 id 포함)
+morning_key = f"morning_tasks_{date_key}"
+afternoon_key = f"afternoon_tasks_{date_key}"
 
-# 진행도 표시 (항상 상단 고정) — total이 0일 때 보호 추가
-def fixed_progress(progress, total):
-    if total <= 0:
-        return
-    st.markdown(
-        f"""
-        <div style="position:fixed;top:10px;right:10px;z-index:9999;background:rgba(255,255,255,0.9);padding:8px 16px;border-radius:20px;border:1px solid #eee;box-shadow:0 2px 8px #0001;">
-            🏃‍♂️ <b>진행도</b> {progress}/{total}
-            <div style="width:120px;height:8px;background:#eee;border-radius:4px;overflow:hidden;margin-top:4px;">
-                <div style="width:{int(progress/total*100)}%;height:100%;background:#4CAF50;"></div>
-            </div>
-        </div>
-        """,
-        unsafe_allow_html=True
-    )
+def make_item(title="", place="", time_str=""):
+    return {"id": str(uuid.uuid4()), "title": title, "place": place, "time": time_str}
 
-# 세션 상태 초기화
-if "timetable" not in st.session_state:
-    st.session_state["timetable"] = {}
+if morning_key not in st.session_state:
+    st.session_state[morning_key] = [make_item("오전 일과", "", "")]
+if afternoon_key not in st.session_state:
+    st.session_state[afternoon_key] = [make_item("오후 일과", "", "")]
 
-periods = st.session_state["periods"]
+# 시간 옵션 생성 (15분 간격)
+def make_time_options(section):
+    opts = []
+    if section == "m":  # 오전: 06:00 ~ 11:45
+        start = time(6,0)
+        end_hour = 11
+    else:  # 오후: 12:00 ~ 21:45
+        start = time(12,0)
+        end_hour = 21
+    cur = datetime.combine(datetime.today(), start)
+    while cur.time().hour <= end_hour:
+        opts.append(cur.time().strftime("%H:%M"))
+        cur += timedelta(minutes=15)
+    return opts
 
-# 오전/오후 분리: '점심시간'을 기준으로 나눔
-if any(p["name"] == "점심시간" for p in periods):
-    lunch_idx = next(i for i, p in enumerate(periods) if p["name"] == "점심시간")
-else:
-    lunch_idx = 4  # 기본값
-morning_periods = periods[:lunch_idx]
-afternoon_periods = periods[lunch_idx+1:]
+def parse_time_str(tstr):
+    try:
+        h, m = tstr.split(":")
+        return int(h) * 60 + int(m)
+    except Exception:
+        return 10**9  # very large -> put at end
 
-progress_steps = len([p for p in periods if p["name"] != "점심시간"])
-progress = 0
+def sort_tasks_by_time(state_key):
+    lst = list(st.session_state[state_key])
+    # stable sort by parse_time_str (empty/invalid times go to end)
+    lst.sort(key=lambda item: parse_time_str(item.get("time", "") or ""))
+    st.session_state[state_key] = lst
 
-st.markdown("## 오전 일정")
-for idx, period in enumerate(morning_periods):
-    st.markdown(f"### {period['name']} ({period['time']})")
-    col1, col2, col3, col4, col5 = st.columns([2,2,2,2,2])
+def render_tasks(section_label, state_key, prefix):
+    cols = st.columns([8,1])
+    with cols[0]:
+        st.markdown(f"## {section_label}")
+    with cols[1]:
+        if st.button("추가", key=f"add_{prefix}_{date_key}"):
+            st.session_state[state_key].append(make_item(f"{section_label} 추가", "", ""))
 
-    # 점심 전 교시 처리 (점심시간은 아닌 상태)
-    subject_key = f"subject_m_{idx}_{selected_date.isoformat()}"
-    done_key = f"done_m_{idx}_{selected_date.isoformat()}"
-    supplies_key = f"supplies_m_{idx}_{selected_date.isoformat()}"
-    ready_key = f"ready_m_{idx}_{selected_date.isoformat()}"
+    time_opts = make_time_options(prefix)
 
-    with col1:
-        subject = st.selectbox("과목 선택", subjects, key=subject_key)
-    with col2:
-        place = st.text_input("장소 입력", key=f"place_m_{idx}_{selected_date.isoformat()}")
-
-    # 준비물 동적 변경
-    if "supplies_state" not in st.session_state:
-        st.session_state["supplies_state"] = {}
-    prev_subject = st.session_state["supplies_state"].get(subject_key, "")
-    default_supplies = get_default_supplies(subject)
-    if prev_subject != subject:
-        st.session_state[supplies_key] = ", ".join(default_supplies)
-        st.session_state["supplies_state"][subject_key] = subject
-
-    with col3:
-        supplies = st.text_input(
-            "준비물", st.session_state.get(supplies_key, ", ".join(default_supplies)), key=supplies_key
-        )
-        supplies_list = [s.strip() for s in supplies.split(",") if s.strip()]
-        ready = st.checkbox("준비물 완료", key=ready_key)
-    with col4:
-        done = st.checkbox("수업 준비 완료", key=done_key)
-        if done:
-            progress += 1
-    with col5:
-        st.markdown("교사 확인")
-
-        # 서명 캔버스 키 (ISO 날짜 문자열 사용)
-        date_key = selected_date.isoformat()
-        sign_img_key = f"sign_img_m_{idx}_{date_key}"
-        sign_locked_key = f"sign_locked_m_{idx}_{date_key}"
-        canvas_key = f"sign_canvas_m_{idx}_{date_key}"
-        lock_icon_key = f"lock_icon_m_{idx}_{date_key}"
-        unlock_icon_key = f"unlock_icon_m_{idx}_{date_key}"
-
-        if sign_locked_key not in st.session_state:
-            st.session_state[sign_locked_key] = False
-        if sign_img_key not in st.session_state:
-            st.session_state[sign_img_key] = None
-
-        saved_img = st.session_state.get(sign_img_key)
-        bg_bytes = None
-        if saved_img is not None:
-            try:
-                from io import BytesIO
-                buf = BytesIO()
-                saved_img.convert("RGBA").save(buf, format="PNG")
-                bg_bytes = buf.getvalue()
-            except Exception:
-                bg_bytes = None
-
-        if st.session_state.get(sign_locked_key, False):
-            if saved_img is not None:
-                st.image(saved_img, width=150)
-            else:
-                st.info("저장된 서명이 없습니다.")
-            if st.button("🔓", key=unlock_icon_key):
-                st.session_state[sign_locked_key] = False
-        else:
-            try:
-                canvas_result = st_canvas(
-                    key=canvas_key,
-                    height=120,
-                    width=300,
-                    background_color="#ffffff",
-                    background_image=bg_bytes,
-                    drawing_mode="freedraw",
-                    stroke_width=2,
-                    stroke_color="#222",
-                    update_streamlit=True,
+    # 렌더링: 각 항목의 위젯 key에 index 대신 고유 id 사용 -> 정렬 시 입력값 유지
+    for item in list(st.session_state[state_key]):
+        item_id = item["id"]
+        container = st.container()
+        with container:
+            c_title, c_place, c_time, c_actions = st.columns([3,3,3,1])
+            with c_title:
+                title = st.text_input(
+                    "일과명",
+                    value=item.get("title", ""),
+                    placeholder="어떤 계획이 있나요?",
+                    key=f"title_{prefix}_{item_id}_{date_key}"
                 )
-            except Exception:
-                canvas_result = st_canvas(
-                    key=canvas_key + "_fb",
-                    height=120,
-                    width=300,
-                    background_color="#ffffff",
-                    drawing_mode="freedraw",
-                    stroke_width=2,
-                    stroke_color="#222",
-                    update_streamlit=True,
+                # 바로 반영
+                for it in st.session_state[state_key]:
+                    if it["id"] == item_id:
+                        it["title"] = title
+                        break
+            with c_place:
+                place = st.text_input(
+                    "장소(선택)",
+                    value=item.get("place", ""),
+                    key=f"place_{prefix}_{item_id}_{date_key}"
                 )
-
-            if canvas_result is not None and getattr(canvas_result, "image_data", None) is not None:
-                try:
-                    arr = np.array(canvas_result.image_data)
-                    if np.issubdtype(arr.dtype, np.floating):
-                        arr = (arr * 255).astype(np.uint8)
-                    else:
-                        arr = arr.astype(np.uint8)
-                    pil_img = Image.fromarray(arr).convert("RGBA")
-                    st.session_state[sign_img_key] = pil_img
-                except Exception as e:
-                    st.error("서명 이미지 변환에 실패했습니다.")
-                    st.write(str(e))
-
-            if st.button("🔒", key=lock_icon_key):
-                if st.session_state.get(sign_img_key) is not None:
-                    st.session_state[sign_locked_key] = True
-                else:
-                    st.warning("먼저 서명을 그려주세요.")
-
-    st.session_state["timetable"][f"{selected_date}_{period['name']}"] = {
-        "subject": subject,
-        "place": place,
-        "supplies": supplies_list,
-        "ready": ready,
-        "done": done
-    }
-
-    st.markdown('<hr style="border-top: 2px dashed #bbb;">', unsafe_allow_html=True)
-
-# 점심시간 표시
-if lunch_idx < len(periods):
-    lunch = periods[lunch_idx]
-    st.markdown(f"### {lunch['name']} ({lunch['time']})")
-    col1, col2, col3 = st.columns(3)
-    with col1:
-        lunch_eat = st.checkbox("🍱 식사", key=f"lunch_eat_{selected_date.isoformat()}")
-    with col2:
-        lunch_brush = st.checkbox("🪥 양치", key=f"lunch_brush_{selected_date.isoformat()}")
-    with col3:
-        lunch_done = st.checkbox("✅ 점심시간 완료", key=f"lunch_done_{selected_date.isoformat()}")
-    if lunch_eat and lunch_brush and lunch_done:
-        progress += 1
-    st.markdown('<hr style="border-top: 2px dashed #bbb;">', unsafe_allow_html=True)
-
-st.markdown("## 오후 일정")
-for idx, period in enumerate(afternoon_periods):
-    st.markdown(f"### {period['name']} ({period['time']})")
-    col1, col2, col3, col4, col5 = st.columns([2,2,2,2,2])
-
-    subject_key = f"subject_a_{idx}_{selected_date.isoformat()}"
-    done_key = f"done_a_{idx}_{selected_date.isoformat()}"
-    supplies_key = f"supplies_a_{idx}_{selected_date.isoformat()}"
-    ready_key = f"ready_a_{idx}_{selected_date.isoformat()}"
-
-    with col1:
-        subject = st.selectbox("과목 선택", subjects, key=subject_key)
-    with col2:
-        place = st.text_input("장소 입력", key=f"place_a_{idx}_{selected_date.isoformat()}")
-
-    if "supplies_state" not in st.session_state:
-        st.session_state["supplies_state"] = {}
-    prev_subject = st.session_state["supplies_state"].get(subject_key, "")
-    default_supplies = get_default_supplies(subject)
-    if prev_subject != subject:
-        st.session_state[supplies_key] = ", ".join(default_supplies)
-        st.session_state["supplies_state"][subject_key] = subject
-
-    with col3:
-        supplies = st.text_input(
-            "준비물", st.session_state.get(supplies_key, ", ".join(default_supplies)), key=supplies_key
-        )
-        supplies_list = [s.strip() for s in supplies.split(",") if s.strip()]
-        ready = st.checkbox("준비물 완료", key=ready_key)
-    with col4:
-        done = st.checkbox("수업 준비 완료", key=done_key)
-        if done:
-            progress += 1
-    with col5:
-        st.markdown("교사 확인")
-
-        # 서명 캔버스 키 (ISO 날짜 문자열 사용)
-        date_key = selected_date.isoformat()
-        sign_img_key = f"sign_img_a_{idx}_{date_key}"
-        sign_locked_key = f"sign_locked_a_{idx}_{date_key}"
-        canvas_key = f"sign_canvas_a_{idx}_{date_key}"
-        lock_icon_key = f"lock_icon_a_{idx}_{date_key}"
-        unlock_icon_key = f"unlock_icon_a_{idx}_{date_key}"
-
-        if sign_locked_key not in st.session_state:
-            st.session_state[sign_locked_key] = False
-        if sign_img_key not in st.session_state:
-            st.session_state[sign_img_key] = None
-
-        saved_img = st.session_state.get(sign_img_key)
-        bg_bytes = None
-        if saved_img is not None:
-            try:
-                from io import BytesIO
-                buf = BytesIO()
-                saved_img.convert("RGBA").save(buf, format="PNG")
-                bg_bytes = buf.getvalue()
-            except Exception:
-                bg_bytes = None
-
-        if st.session_state.get(sign_locked_key, False):
-            if saved_img is not None:
-                st.image(saved_img, width=150)
-            else:
-                st.info("저장된 서명이 없습니다.")
-            if st.button("🔓", key=unlock_icon_key):
-                st.session_state[sign_locked_key] = False
-        else:
-            try:
-                canvas_result = st_canvas(
-                    key=canvas_key,
-                    height=120,
-                    width=300,
-                    background_color="#ffffff",
-                    background_image=bg_bytes,
-                    drawing_mode="freedraw",
-                    stroke_width=2,
-                    stroke_color="#222",
-                    update_streamlit=True,
+                for it in st.session_state[state_key]:
+                    if it["id"] == item_id:
+                        it["place"] = place
+                        break
+            with c_time:
+                default_time = item.get("time") or (time_opts[0] if time_opts else "")
+                idx = time_opts.index(default_time) if default_time in time_opts else 0
+                selected_time = st.selectbox(
+                    "",
+                    time_opts,
+                    index=idx,
+                    key=f"time_{prefix}_{item_id}_{date_key}"
                 )
-            except Exception:
-                canvas_result = st_canvas(
-                    key=canvas_key + "_fb",
-                    height=120,
-                    width=300,
-                    background_color="#ffffff",
-                    drawing_mode="freedraw",
-                    stroke_width=2,
-                    stroke_color="#222",
-                    update_streamlit=True,
-                )
+                for it in st.session_state[state_key]:
+                    if it["id"] == item_id:
+                        it["time"] = selected_time
+                        break
+            with c_actions:
+                del_key = f"del_{prefix}_{item_id}_{date_key}"
+                if st.button("삭제", key=del_key):
+                    st.session_state[state_key] = [it for it in st.session_state[state_key] if it["id"] != item_id]
 
-            if canvas_result is not None and getattr(canvas_result, "image_data", None) is not None:
-                try:
-                    arr = np.array(canvas_result.image_data)
-                    if np.issubdtype(arr.dtype, np.floating):
-                        arr = (arr * 255).astype(np.uint8)
-                    else:
-                        arr = arr.astype(np.uint8)
-                    pil_img = Image.fromarray(arr).convert("RGBA")
-                    st.session_state[sign_img_key] = pil_img
-                except Exception as e:
-                    st.error("서명 이미지 변환에 실패했습니다.")
-                    st.write(str(e))
+    # 입력/삭제 후에는 시간 기준으로 자동 정렬
+    sort_tasks_by_time(state_key)
 
-            if st.button("🔒", key=lock_icon_key):
-                if st.session_state.get(sign_img_key) is not None:
-                    st.session_state[sign_locked_key] = True
-                else:
-                    st.warning("먼저 서명을 그려주세요.")
+# 렌더링
+render_tasks("오전 일정", morning_key, "m")
+st.markdown('<hr style="border-top: 2px dashed #bbb;">', unsafe_allow_html=True)
+render_tasks("오후 일정", afternoon_key, "a")
 
-    st.session_state["timetable"][f"{selected_date}_{period['name']}"] = {
-        "subject": subject,
-        "place": place,
-        "supplies": supplies_list,
-        "ready": ready,
-        "done": done
-    }
-
-    st.markdown('<hr style="border-top: 2px dashed #bbb;">', unsafe_allow_html=True)
-
-# 진행도(상단 고정)
-fixed_progress(progress, progress_steps)
-
-# 오늘 하루 코멘트
+# 코멘트 저장
 st.markdown("### 오늘 하루는 어땠나요?")
-comment = st.text_area("", key=f"comment_{selected_date}")
-st.session_state["timetable"][f"{selected_date}_comment"] = comment
+comment = st.text_area("", key=f"comment_{date_key}")
+st.session_state["timetable"] = st.session_state.get("timetable", {})
+st.session_state["timetable"][f"{date_key}_comment"] = comment
