@@ -2,6 +2,8 @@ import streamlit as st
 from datetime import datetime, timedelta
 from streamlit_drawable_canvas import st_canvas
 import calendar
+import numpy as np
+from PIL import Image
 
 # 과목 리스트 (특수학급 명칭 변경)
 subjects = [
@@ -61,8 +63,10 @@ weekday = selected_date.weekday()  # 0=월, 6=일
 # 선택한 날짜 정보만 표시
 st.markdown(f"#### {month}월 {day}일 {weekday_labels[weekday]}요일")
 
-# 진행도 표시 (항상 상단 고정)
+# 진행도 표시 (항상 상단 고정) — total이 0일 때 보호 추가
 def fixed_progress(progress, total):
+    if total <= 0:
+        return
     st.markdown(
         f"""
         <div style="position:fixed;top:10px;right:10px;z-index:9999;background:rgba(255,255,255,0.9);padding:8px 16px;border-radius:20px;border:1px solid #eee;box-shadow:0 2px 8px #0001;">
@@ -133,16 +137,91 @@ for idx, period in enumerate(periods):
             progress += 1
     with col5:
         st.markdown("교사 확인")
-        st_canvas(
-            key=f"sign_{idx}_{selected_date}",
-            height=60,
-            width=150,
-            background_color="#fff",
-            drawing_mode="freedraw",
-            stroke_width=2,
-            stroke_color="#222",
-            update_streamlit=True,
-        )
+
+        # 안정적인 키: 날짜를 ISO 문자열로 변환해서 사용
+        date_key = selected_date.isoformat() if hasattr(selected_date, "isoformat") else str(selected_date)
+        sign_img_key = f"sign_img_{idx}_{date_key}"
+        sign_locked_key = f"sign_locked_{idx}_{date_key}"
+        canvas_key = f"sign_canvas_{idx}_{date_key}"
+        lock_icon_key = f"lock_icon_{idx}_{date_key}"
+        unlock_icon_key = f"unlock_icon_{idx}_{date_key}"
+
+        # 초기값 보장
+        if sign_locked_key not in st.session_state:
+            st.session_state[sign_locked_key] = False
+        if sign_img_key not in st.session_state:
+            st.session_state[sign_img_key] = None
+
+        # 단일 블록: 캔버스 하나만 사용 (저장된 이미지는 캔버스의 background_image로 로드 시도)
+        saved_img = st.session_state.get(sign_img_key)
+
+        # background_image로 전달할 bytes 준비 (PIL -> PNG bytes). 실패 시 None 처리
+        bg_bytes = None
+        if saved_img is not None:
+            try:
+                from io import BytesIO
+                buf = BytesIO()
+                saved_img.convert("RGBA").save(buf, format="PNG")
+                bg_bytes = buf.getvalue()
+            except Exception:
+                bg_bytes = None
+
+        # 잠금 상태일 때: 저장된 이미지만 보여주고 편집 불가 (잠금 해제 아이콘)
+        if st.session_state.get(sign_locked_key, False):
+            if saved_img is not None:
+                st.image(saved_img, width=150)
+            else:
+                st.info("저장된 서명이 없습니다.")
+            if st.button("🔓", key=unlock_icon_key):
+                st.session_state[sign_locked_key] = False
+        else:
+            # 잠금 해제 상태: 단일 캔버스 표시 (가능하면 background_image로 불러오기)
+            try:
+                canvas_result = st_canvas(
+                    key=canvas_key,
+                    height=120,
+                    width=300,
+                    background_color="#ffffff",
+                    background_image=bg_bytes,  # bytes or None
+                    drawing_mode="freedraw",
+                    stroke_width=2,
+                    stroke_color="#222",
+                    update_streamlit=True,
+                )
+            except Exception as e:
+                # background_image에 의해 에러가 나면 fallback: 캔버스 without background
+                canvas_result = st_canvas(
+                    key=canvas_key + "_fb",
+                    height=120,
+                    width=300,
+                    background_color="#ffffff",
+                    drawing_mode="freedraw",
+                    stroke_width=2,
+                    stroke_color="#222",
+                    update_streamlit=True,
+                )
+
+            # 캔버스에서 이미지가 있으면 세션에 저장 (안전 변환)
+            if canvas_result is not None and getattr(canvas_result, "image_data", None) is not None:
+                try:
+                    arr = np.array(canvas_result.image_data)
+                    # float (0..1) -> uint8(0..255)
+                    if np.issubdtype(arr.dtype, np.floating):
+                        arr = (arr * 255).astype(np.uint8)
+                    else:
+                        arr = arr.astype(np.uint8)
+                    pil_img = Image.fromarray(arr).convert("RGBA")
+                    st.session_state[sign_img_key] = pil_img
+                except Exception as e:
+                    st.error("서명 이미지 변환에 실패했습니다.")
+                    st.write(str(e))
+
+            # 잠금(아이콘) 버튼 — 서명이 있으면 한 번 누르면 바로 잠금
+            if st.button("🔒", key=lock_icon_key):
+                if st.session_state.get(sign_img_key) is not None:
+                    st.session_state[sign_locked_key] = True
+                else:
+                    st.warning("먼저 서명을 그려주세요.")
 
     st.session_state["timetable"][f"{selected_date}_{period['name']}"] = {
         "subject": subject,
