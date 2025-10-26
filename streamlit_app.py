@@ -8,7 +8,7 @@ from PIL import Image
 # 과목 리스트 (특수학급 명칭 변경)
 subjects = [
     "국어", "영어", "수학", "사회", "과학", "음악", "미술", "체육",
-    "진로", "정보",
+    "진로", "정보", "역사",
     "특수(진로)", "특수(수학)", "특수(체육)", "특수(국어)", "특수(정보)"
 ]
 
@@ -30,6 +30,9 @@ if "periods" not in st.session_state:
 # 시간표 수정 탭 (추가/삭제)
 with st.expander("⏰ 시간표 수정/교시 추가/삭제"):
     periods = st.session_state["periods"]
+    # 삭제 시 st.experimental_rerun() 사용하지 않도록 변경.
+    # 버튼 클릭 시 세션 상태를 갱신하고 루프를 즉시 빠져나가도록 하여 안전하게 삭제 처리합니다.
+    deleted = False
     for i, period in enumerate(periods):
         col1, col2, col3 = st.columns([2, 3, 1])
         with col1:
@@ -39,15 +42,22 @@ with st.expander("⏰ 시간표 수정/교시 추가/삭제"):
         with col3:
             if st.button("삭제", key=f"delete_period_{i}") and len(periods) > 1:
                 periods.pop(i)
-                st.experimental_rerun()
+                # 세션 상태에 반영
+                st.session_state["periods"] = periods
+                deleted = True
+                # 루프 중간 변경으로 인한 불일치 방지를 위해 루프를 빠져나감
+                break
+    # 삭제가 발생했으면 이후 코드는 갱신된 st.session_state["periods"] 기반으로 다시 실행되며,
+    # 별도의 experimental_rerun 호출은 필요하지 않습니다.
     if st.button("교시 추가"):
         periods.append({"name": f"{len(periods)+1}교시", "time": "시간 입력"})
     st.session_state["periods"] = periods
 
 # 준비물 기본값 함수 정의
 def get_default_supplies(subject):
+    # '특수' 과목은 필기도구로 매핑
     if "특수" in subject:
-        return []
+        return ["필기도구"]
     if subject == "체육":
         return ["체육복", "운동화"]
     return ["교과서", "필기도구"]
@@ -111,11 +121,59 @@ for idx, period in enumerate(periods):
     done_key = f"done_{idx}_{selected_date}"
     supplies_key = f"supplies_{idx}_{selected_date}"
     ready_key = f"ready_{idx}_{selected_date}"
+    move_done_key = f"move_done_{idx}_{selected_date}"
 
     with col1:
         subject = st.selectbox("과목 선택", subjects, key=subject_key)
     with col2:
-        place = st.text_input("장소 입력", key=f"place_{idx}_{selected_date}")
+        # 과목에 따라 자동으로 장소를 채움 (요구사항 반영)
+        def get_default_place_for_subject(subj):
+            # 국어, 영어, 수학, 사회, 진로, 역사 -> 2-5
+            if subj in ["국어", "영어", "수학", "사회", "진로", "역사"]:
+                return "2-5"
+            # '특수'가 들어가면 모두 특수학급
+            if "특수" in subj:
+                return "특수학급"
+            # 기타 매핑
+            if subj == "정보":
+                return "컴퓨터실"
+            if subj == "체육":
+                return "운동장, 체육관"
+            if subj == "미술":
+                return "미술실"
+            if subj == "음악":
+                return "음악실"
+            if subj == "과학":
+                return "과학실"
+            return ""
+
+        auto_place = get_default_place_for_subject(subject)
+        place_key = f"place_{idx}_{selected_date}"
+        prev_subj_key = f"subject_prev_{idx}_{selected_date}"
+
+        # 이전 과목을 기록해 두어 과목 변경 시 장소를 자동 갱신하도록 함
+        if prev_subj_key not in st.session_state:
+            st.session_state[prev_subj_key] = subject
+
+        # 과목이 변경되면 자동 장소로 덮어쓰기
+        if st.session_state.get(prev_subj_key) != subject:
+            st.session_state[place_key] = auto_place
+            st.session_state[prev_subj_key] = subject
+
+        # widget 생성 전에 기본값 보장
+        if place_key not in st.session_state:
+            st.session_state[place_key] = auto_place
+
+        # 라벨 '장소' 보이도록 수정, 사용자가 직접 수정 가능
+        place = st.text_input("장소", key=place_key)
+
+        # 장소 밑에 '이동 완료' 체크박스 추가
+        # 체크 상태는 세션에 보관되어 재렌더링 시 유지됩니다.
+        if move_done_key not in st.session_state:
+            st.session_state[move_done_key] = False
+        # st.checkbox이 key를 사용하면 st.session_state에 자동으로 값이 들어갑니다.
+        # 따라서 위젯 생성 후 st.session_state[...]를 직접 다시 쓰면 StreamlitAPIException이 발생합니다.
+        move_done = st.checkbox("이동 완료", value=st.session_state.get(move_done_key, False), key=move_done_key)
 
     # 준비물 동적 변경
     if "supplies_state" not in st.session_state:
@@ -133,7 +191,24 @@ for idx, period in enumerate(periods):
         supplies_list = [s.strip() for s in supplies.split(",") if s.strip()]
         ready = st.checkbox("준비물 완료", key=ready_key)
     with col4:
-        done = st.checkbox("수업 준비 완료", key=done_key)
+        # move_done(이동 완료)와 ready(준비물 완료)가 모두 체크되면 done(수업준비완료)를 자동으로 활성화
+        move_done_val = st.session_state.get(move_done_key, False)
+        ready_val = st.session_state.get(ready_key, False)
+        # 위젯을 생성하기 전에 기본값을 세션에 설정해야 Streamlit 오류를 피합니다.
+        if move_done_val and ready_val and not st.session_state.get(done_key, False):
+            st.session_state[done_key] = True
+
+        # 체크박스와 라벨의 줄 높이를 맞춰 중앙 정렬되게 표시
+        chk_col, lbl_col = st.columns([1, 4])
+        with chk_col:
+            done = st.checkbox("", key=done_key)
+        with lbl_col:
+            # 라벨을 flex로 감싸고 align-items:center로 체크박스와 수직 중앙정렬
+            if done:
+                label_html = "<div style='display:flex;align-items:center;height:28px;color:#2e7d32;font-weight:700;'>수업준비완료</div>"
+            else:
+                label_html = "<div style='display:flex;align-items:center;height:28px;color:#444;'>수업 준비 완료</div>"
+            st.markdown(label_html, unsafe_allow_html=True)
         if done:
             progress += 1
     with col5:
@@ -206,16 +281,26 @@ for idx, period in enumerate(periods):
             if canvas_result is not None and getattr(canvas_result, "image_data", None) is not None:
                 try:
                     arr = np.array(canvas_result.image_data)
-                    # float (0..1) -> uint8(0..255)
-                    if np.issubdtype(arr.dtype, np.floating):
-                        arr = (arr * 255).astype(np.uint8)
+                    # 안전한 정규화/캐스트 처리:
+                    if arr.dtype.kind == "f":
+                        # st_canvas가 0..1 스케일을 줄 수도, 0..255 스케일을 줄 수도 있으므로 max로 판단
+                        if arr.max() <= 1.01:
+                            arr = (arr * 255).astype(np.uint8)
+                        else:
+                            arr = arr.astype(np.uint8)
                     else:
                         arr = arr.astype(np.uint8)
+
+                    # 채널 수 보정: RGB -> RGBA
+                    if arr.ndim == 3 and arr.shape[2] == 3:
+                        alpha = np.full((arr.shape[0], arr.shape[1], 1), 255, dtype=np.uint8)
+                        arr = np.concatenate([arr, alpha], axis=2)
+
                     pil_img = Image.fromarray(arr).convert("RGBA")
                     st.session_state[sign_img_key] = pil_img
                 except Exception as e:
                     st.error("서명 이미지 변환에 실패했습니다.")
-                    st.write(str(e))
+                    st.write(repr(e))
 
             # 잠금(아이콘) 버튼 — 서명이 있으면 한 번 누르면 바로 잠금
             if st.button("🔒", key=lock_icon_key):
@@ -229,7 +314,8 @@ for idx, period in enumerate(periods):
         "place": place,
         "supplies": supplies_list,
         "ready": ready,
-        "done": done
+        "done": done,
+        "move_done": st.session_state.get(move_done_key, False)
     }
     # 점선 구분선
     st.markdown('<hr style="border-top: 2px dashed #bbb;">', unsafe_allow_html=True)
