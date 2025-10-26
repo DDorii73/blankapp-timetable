@@ -16,7 +16,8 @@ morning_key = f"morning_tasks_{date_key}"
 afternoon_key = f"afternoon_tasks_{date_key}"
 
 def make_item(title="", place="", time_str=""):
-    return {"id": str(uuid.uuid4()), "title": title, "place": place, "time": time_str}
+    # 'done' 상태 추가 (초기 False)
+    return {"id": str(uuid.uuid4()), "title": title, "place": place, "time": time_str, "done": False}
 
 # 초기 항목: title은 빈 문자열로 두어 placeholder(회색 안내)가 보이게 함
 if morning_key not in st.session_state:
@@ -90,50 +91,83 @@ def render_tasks(section_label, state_key, prefix):
         with container:
             c_title, c_place, c_time, c_actions = st.columns([3,3,3,1])
 
-            # 일과명: 보기(selectbox) 제거하고 바로 텍스트 입력으로 변경
+            # done 상태 키/값 미리 확인
+            done_key = f"done_{prefix}_{item_id}_{date_key}"
+            done_val = st.session_state.get(done_key, item.get("done", False))
+
+            # 일과명: 완료시에는 스트라이크(취소선) + 연한 회색 텍스트로 표시, 편집 불가
             with c_title:
-                title_val = st.text_input(
-                    "",  # 라벨은 위 헤더에서 처리
-                    value=item.get("title", ""),
-                    placeholder="어떤 계획이 있나요?",
-                    key=f"title_{prefix}_{item_id}_{date_key}"
-                )
-                # 저장
-                for it in st.session_state[state_key]:
-                    if it["id"] == item_id:
-                        it["title"] = title_val
-                        break
+                if done_val:
+                    display_title = item.get("title", "") or "(완료된 일정)"
+                    st.markdown(f"<div style='color:#777; text-decoration:line-through; margin:6px 0;'>{display_title}</div>", unsafe_allow_html=True)
+                else:
+                    title_val = st.text_input(
+                        "",  # 라벨은 위 헤더에서 처리
+                        value=item.get("title", ""),
+                        placeholder="어떤 계획이 있나요?",
+                        key=f"title_{prefix}_{item_id}_{date_key}"
+                    )
+                    # 저장
+                    for it in st.session_state[state_key]:
+                        if it["id"] == item_id:
+                            it["title"] = title_val
+                            break
 
-            # 장소 칸: 단순 텍스트 입력 (placeholder: '어디에서 하나요?')
+            # 장소 칸: 완료시 스트라이크로 표시
             with c_place:
-                place_val = st.text_input(
-                    "",
-                    value=item.get("place", ""),
-                    placeholder="어디에서 하나요?",
-                    key=f"place_{prefix}_{item_id}_{date_key}"
-                )
-                for it in st.session_state[state_key]:
-                    if it["id"] == item_id:
-                        it["place"] = place_val
-                        break
+                if done_val:
+                    display_place = item.get("place", "")
+                    st.markdown(f"<div style='color:#777; text-decoration:line-through; margin:6px 0;'>{display_place}</div>", unsafe_allow_html=True)
+                else:
+                    place_val = st.text_input(
+                        "",
+                        value=item.get("place", ""),
+                        placeholder="어디에서 하나요?",
+                        key=f"place_{prefix}_{item_id}_{date_key}"
+                    )
+                    for it in st.session_state[state_key]:
+                        if it["id"] == item_id:
+                            it["place"] = place_val
+                            break
 
-            # 시간 칸
+            # 시간 칸: 완료시 스트라이크로 표시
             with c_time:
-                default_time = item.get("time") or (time_opts[0] if time_opts else "")
-                idx = time_opts.index(default_time) if default_time in time_opts else 0
-                selected_time = st.selectbox(
-                    "",
-                    time_opts,
-                    index=idx,
-                    key=f"time_{prefix}_{item_id}_{date_key}"
-                )
+                if done_val:
+                    display_time = item.get("time", "")
+                    st.markdown(f"<div style='color:#777; text-decoration:line-through; margin:6px 0;'>{display_time}</div>", unsafe_allow_html=True)
+                else:
+                    default_time = item.get("time") or (time_opts[0] if time_opts else "")
+                    idx = time_opts.index(default_time) if default_time in time_opts else 0
+                    selected_time = st.selectbox(
+                        "",
+                        time_opts,
+                        index=idx,
+                        key=f"time_{prefix}_{item_id}_{date_key}"
+                    )
+                    for it in st.session_state[state_key]:
+                        if it["id"] == item_id:
+                            it["time"] = selected_time
+                            break
+
+            # 오른쪽: 완료 체크박스와 삭제 버튼
+            with c_actions:
+                # '완료' 글자 표시(완료 전). 체크하면 글자가 사라지고 항목에 취소선이 그어짐.
+                if done_key not in st.session_state:
+                    st.session_state[done_key] = item.get("done", False)
+
+                # 완료 전에는 '완료' 라벨을 보여줌
+                if not st.session_state[done_key]:
+                    st.markdown("<div style='font-weight:600;margin-bottom:4px;'>완료</div>", unsafe_allow_html=True)
+
+                # 체크박스 (라벨 없음). 체크하면 다음 rerun에서 위 라벨이 사라지고 취소선이 적용됩니다.
+                done = st.checkbox("", value=st.session_state[done_key], key=done_key)
+                # 아이템 상태 업데이트
                 for it in st.session_state[state_key]:
                     if it["id"] == item_id:
-                        it["time"] = selected_time
+                        it["done"] = done
                         break
 
-            # 삭제 버튼
-            with c_actions:
+                # 삭제 버튼 (기존 동작 유지)
                 del_key = f"del_{prefix}_{item_id}_{date_key}"
                 if st.button("삭제", key=del_key):
                     st.session_state[state_key] = [it for it in st.session_state[state_key] if it["id"] != item_id]
