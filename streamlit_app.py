@@ -370,6 +370,10 @@ st.session_state["timetable"][f"{selected_date}_comment"] = comment
 st.markdown("### 오늘 하루 요약")
 st.caption("오늘 학교 생활을 요약합니다(장소 이동/준비물/선생님 확인)")
 
+# 선택한 날짜를 "2025년 10월 28일(화)" 형식으로 표시
+selected_day_str = f"{selected_date.year}년 {selected_date.month}월 {selected_date.day}일({weekday_labels[selected_date.weekday()]})"
+st.markdown(f"**{selected_day_str}**")
+
 date_key_iso = selected_date.isoformat() if hasattr(selected_date, "isoformat") else str(selected_date)
 
 # 헤더 (칸 너비를 같게)
