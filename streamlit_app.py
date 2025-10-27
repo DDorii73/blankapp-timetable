@@ -4,6 +4,27 @@ from streamlit_drawable_canvas import st_canvas
 import calendar
 import numpy as np
 from PIL import Image
+import base64
+# 서명 영역 크기 상수 (잠금 전/후 동일하게 유지)
+SIGN_W = 200
+SIGN_H = 120
+
+# 캔버스 요소에 대해 강제 스타일 적용 — 페이지 내 canvas 요소 크기/테두리 동일화
+st.markdown(
+    f"""
+    <style>
+    /* 앱 내의 모든 canvas에 대해 고정 크기/테두리 적용 (st_canvas가 생성한 canvas도 포함) */
+    canvas {{
+        width: {SIGN_W}px !important;
+        height: {SIGN_H}px !important;
+        border: 1px solid #ddd !important;
+        box-sizing: border-box !important;
+        display: block;
+    }}
+    </style>
+    """,
+    unsafe_allow_html=True,
+)
 
 # 과목 리스트 (특수학급 명칭 변경)
 subjects = [
@@ -105,14 +126,44 @@ for idx, period in enumerate(periods):
 
     # 점심시간 처리 (교사싸인 없음)
     if period["name"] == "점심시간":
+        # 안정적인 키 사용
+        lunch_eat_key = f"lunch_eat_{selected_date}_{idx}"
+        lunch_brush_key = f"lunch_brush_{selected_date}_{idx}"
+        lunch_done_key = f"lunch_done_{selected_date}_{idx}"
+
+        # 식사, 양치 체크박스 생성 (세션이 자동으로 관리)
         with col1:
-            lunch_eat = st.checkbox("🍱 식사", key=f"lunch_eat_{selected_date}_{idx}")
+            st.checkbox("🍱 식사", key=lunch_eat_key)
         with col2:
-            lunch_brush = st.checkbox("🪥 양치", key=f"lunch_brush_{selected_date}_{idx}")
+            st.checkbox("🪥 양치", key=lunch_brush_key)
+
+        # 현재 상태 읽기
+        eat_val = st.session_state.get(lunch_eat_key, False)
+        brush_val = st.session_state.get(lunch_brush_key, False)
+
+        # 둘 다 체크되어 있을 때만 자동으로 점심 완료가 활성화되도록 함
+        lunch_done_val = bool(eat_val and brush_val)
+
+        # 세션값을 위젯 생성 전에 설정(자동 반영, 사용자가 직접 조작 불가)
+        st.session_state[lunch_done_key] = lunch_done_val
+
+        # 완료 표시: 활성화이면 초록색 체크 텍스트, 아니면 회색 대시 (가운데 정렬)
         with col3:
-            lunch_done = st.checkbox("✅ 점심시간 완료", key=f"lunch_done_{selected_date}_{idx}")
-        if lunch_eat and lunch_brush and lunch_done:
+            if lunch_done_val:
+                st.markdown(
+                    "<div style='display:flex;align-items:center;justify-content:center;height:28px;color:#2e7d32;font-weight:700;'>✅ 점심시간 완료</div>",
+                    unsafe_allow_html=True,
+                )
+            else:
+                st.markdown(
+                    "<div style='display:flex;align-items:center;justify-content:center;height:28px;color:#bbb;font-weight:700;'>— 점심시간 완료</div>",
+                    unsafe_allow_html=True,
+                )
+
+        # 완료 여부로 진행도 계산
+        if st.session_state.get(lunch_done_key, False):
             progress += 1
+
         # 점선 구분선
         st.markdown('<hr style="border-top: 2px dashed #bbb;">', unsafe_allow_html=True)
         continue
@@ -191,30 +242,33 @@ for idx, period in enumerate(periods):
         supplies_list = [s.strip() for s in supplies.split(",") if s.strip()]
         ready = st.checkbox("준비물 완료", key=ready_key)
     with col4:
-        # move_done(이동 완료)와 ready(준비물 완료)가 모두 체크되면 done(수업준비완료)를 자동으로 활성화
+        # move_done(이동 완료)와 ready(준비물 완료)가 모두 체크되어야만 수업준비완료가 활성화되도록 함
         move_done_val = st.session_state.get(move_done_key, False)
         ready_val = st.session_state.get(ready_key, False)
-        # 위젯을 생성하기 전에 기본값을 세션에 설정해야 Streamlit 오류를 피합니다.
-        if move_done_val and ready_val and not st.session_state.get(done_key, False):
-            st.session_state[done_key] = True
+
+        # 위젯 생성 전에 done 상태를 원본 상태(move_done AND ready)로 설정하여 자동 동기화
+        if done_key not in st.session_state:
+            st.session_state[done_key] = False
+        st.session_state[done_key] = bool(move_done_val and ready_val)
 
         # 체크박스와 라벨의 줄 높이를 맞춰 중앙 정렬되게 표시
         chk_col, lbl_col = st.columns([1, 4])
         with chk_col:
+            # 위에서 세션에 셋팅한 값으로 렌더링 (사용자가 임의로 변경하면 다음 rerun에서 다시 동기화됩니다)
             done = st.checkbox("", key=done_key)
         with lbl_col:
             # 라벨을 flex로 감싸고 align-items:center로 체크박스와 수직 중앙정렬
-            if done:
+            if st.session_state.get(done_key, False):
                 label_html = "<div style='display:flex;align-items:center;height:28px;color:#2e7d32;font-weight:700;'>수업준비완료</div>"
             else:
                 label_html = "<div style='display:flex;align-items:center;height:28px;color:#444;'>수업 준비 완료</div>"
             st.markdown(label_html, unsafe_allow_html=True)
-        if done:
+        if st.session_state.get(done_key, False):
             progress += 1
     with col5:
         st.markdown("교사 확인")
 
-        # 안정적인 키: 날짜를 ISO 문자열로 변환해서 사용
+        # 키/초기화
         date_key = selected_date.isoformat() if hasattr(selected_date, "isoformat") else str(selected_date)
         sign_img_key = f"sign_img_{idx}_{date_key}"
         sign_locked_key = f"sign_locked_{idx}_{date_key}"
@@ -222,101 +276,85 @@ for idx, period in enumerate(periods):
         lock_icon_key = f"lock_icon_{idx}_{date_key}"
         unlock_icon_key = f"unlock_icon_{idx}_{date_key}"
 
-        # 초기값 보장
         if sign_locked_key not in st.session_state:
             st.session_state[sign_locked_key] = False
         if sign_img_key not in st.session_state:
             st.session_state[sign_img_key] = None
 
-        # 단일 블록: 캔버스 하나만 사용 (저장된 이미지는 캔버스의 background_image로 로드 시도)
         saved_img = st.session_state.get(sign_img_key)
 
-        # background_image로 전달할 bytes 준비 (PIL -> PNG bytes). 실패 시 None 처리
-        bg_bytes = None
-        if saved_img is not None:
-            try:
-                from io import BytesIO
-                buf = BytesIO()
-                saved_img.convert("RGBA").save(buf, format="PNG")
-                bg_bytes = buf.getvalue()
-            except Exception:
-                bg_bytes = None
-
-        # 잠금 상태일 때: 저장된 이미지만 보여주고 편집 불가 (잠금 해제 아이콘)
+        # 잠금 상태: 이미지 박스(편집 불가) — 하나의 칸만 표시
         if st.session_state.get(sign_locked_key, False):
             if saved_img is not None:
-                st.image(saved_img, width=150)
+                try:
+                    from io import BytesIO
+                    buf = BytesIO()
+                    saved_img.convert("RGBA").save(buf, format="PNG")
+                    b64 = base64.b64encode(buf.getvalue()).decode()
+                    st.markdown(
+                        f"""
+                        <div style="width:200px;height:120px;border:1px solid #ddd;background:#fff;display:flex;align-items:center;justify-content:center;box-sizing:border-box;overflow:hidden;">
+                            <img src="data:image/png;base64,{b64}" style="width:100%;height:100%;object-fit:contain;display:block;"/>
+                        </div>
+                        """,
+                        unsafe_allow_html=True,
+                    )
+                except Exception:
+                    st.image(saved_img, width=200)
             else:
-                st.info("저장된 서명이 없습니다.")
-            if st.button("🔓", key=unlock_icon_key):
+                st.markdown("<div style='width:200px;height:120px;border:1px dashed #ccc;display:flex;align-items:center;justify-content:center;color:#999;'>저장된 서명이 없습니다.</div>", unsafe_allow_html=True)
+
+            if st.button("🔓 잠금 해제", key=unlock_icon_key):
                 st.session_state[sign_locked_key] = False
         else:
-            # 잠금 해제 상태: 단일 캔버스 표시 (가능하면 background_image로 불러오기)
-            try:
-                canvas_result = st_canvas(
-                    key=canvas_key,
-                    height=120,
-                    width=300,
-                    background_color="#ffffff",
-                    background_image=bg_bytes,  # bytes or None
-                    drawing_mode="freedraw",
-                    stroke_width=2,
-                    stroke_color="#222",
-                    update_streamlit=True,
-                )
-            except Exception as e:
-                # background_image에 의해 에러가 나면 fallback: 캔버스 without background
-                canvas_result = st_canvas(
-                    key=canvas_key + "_fb",
-                    height=120,
-                    width=300,
-                    background_color="#ffffff",
-                    drawing_mode="freedraw",
-                    stroke_width=2,
-                    stroke_color="#222",
-                    update_streamlit=True,
-                )
+            # 편집 가능 상태: 캔버스 하나만 노출 (200x120)
+            canvas_result = st_canvas(
+                key=canvas_key,
+                height=120,
+                width=200,
+                background_color="#ffffff",
+                background_image=None,
+                drawing_mode="freedraw",
+                stroke_width=2,
+                stroke_color="#222",
+                update_streamlit=True,
+            )
 
-            # 캔버스에서 이미지가 있으면 세션에 저장 (안전 변환)
+            # 캔버스 결과를 안전하게 PIL로 변환해 저장
             if canvas_result is not None and getattr(canvas_result, "image_data", None) is not None:
                 try:
                     arr = np.array(canvas_result.image_data)
-                    # 안전한 정규화/캐스트 처리:
                     if arr.dtype.kind == "f":
-                        # st_canvas가 0..1 스케일을 줄 수도, 0..255 스케일을 줄 수도 있으므로 max로 판단
                         if arr.max() <= 1.01:
                             arr = (arr * 255).astype(np.uint8)
                         else:
                             arr = arr.astype(np.uint8)
                     else:
                         arr = arr.astype(np.uint8)
-
-                    # 채널 수 보정: RGB -> RGBA
                     if arr.ndim == 3 and arr.shape[2] == 3:
                         alpha = np.full((arr.shape[0], arr.shape[1], 1), 255, dtype=np.uint8)
                         arr = np.concatenate([arr, alpha], axis=2)
-
                     pil_img = Image.fromarray(arr).convert("RGBA")
                     st.session_state[sign_img_key] = pil_img
-                except Exception as e:
+                except Exception:
                     st.error("서명 이미지 변환에 실패했습니다.")
-                    st.write(repr(e))
 
-            # 잠금(아이콘) 버튼 — 서명이 있으면 한 번 누르면 바로 잠금
-            if st.button("🔒", key=lock_icon_key):
+            # 잠금 버튼: 서명이 존재할 때만 잠금 가능
+            if st.button("🔒 잠금", key=lock_icon_key):
                 if st.session_state.get(sign_img_key) is not None:
                     st.session_state[sign_locked_key] = True
                 else:
                     st.warning("먼저 서명을 그려주세요.")
 
-    st.session_state["timetable"][f"{selected_date}_{period['name']}"] = {
-        "subject": subject,
-        "place": place,
-        "supplies": supplies_list,
-        "ready": ready,
-        "done": done,
-        "move_done": st.session_state.get(move_done_key, False)
-    }
+        st.session_state["timetable"][f"{selected_date}_{period['name']}"] = {
+            "subject": subject,
+            "place": place,
+            "supplies": supplies_list,
+            "ready": ready,
+            "done": done,
+            "move_done": st.session_state.get(move_done_key, False),
+            # sign info kept in separate sign_img_key / sign_locked_key
+        }
     # 점선 구분선
     st.markdown('<hr style="border-top: 2px dashed #bbb;">', unsafe_allow_html=True)
 
@@ -327,3 +365,61 @@ fixed_progress(progress, progress_steps)
 st.markdown("### 오늘 하루는 어땠나요?")
 comment = st.text_area("", key=f"comment_{selected_date}")
 st.session_state["timetable"][f"{selected_date}_comment"] = comment
+
+# (시간표 루프가 끝난 직후, fixed_progress 호출 전에 아래 코드를 추가)
+st.markdown("### 오늘 하루 요약")
+st.caption("오늘 학교 생활을 요약합니다(장소 이동/준비물/선생님 확인)")
+
+date_key_iso = selected_date.isoformat() if hasattr(selected_date, "isoformat") else str(selected_date)
+
+# 헤더 (칸 너비를 같게)
+h1, h2, h3, h4 = st.columns([1,1,1,1])
+with h1:
+    st.markdown("**교시[교과]**")
+with h2:
+    st.markdown("**이동**")
+with h3:
+    st.markdown("**준비물**")
+with h4:
+    st.markdown("**선생님확인**")
+
+# 각 교시 요약 행 생성 (점심시간 제외)
+for idx, period in enumerate(periods):
+    if period["name"] == "점심시간":
+        continue
+
+    # 원본 키들 (메인 루프와 동일한 키 형식 사용)
+    subj_key = f"subject_{idx}_{selected_date}"
+    move_done_key = f"move_done_{idx}_{selected_date}"
+    ready_key = f"ready_{idx}_{selected_date}"
+    sign_img_key = f"sign_img_{idx}_{date_key_iso}"
+    sign_locked_key = f"sign_locked_{idx}_{date_key_iso}"
+
+    # 원본 상태 읽기 (요약은 오로지 원본 상태만 반영)
+    subj_val = st.session_state.get(subj_key, "")
+    move_val = bool(st.session_state.get(move_done_key, False))
+    ready_val = bool(st.session_state.get(ready_key, False))
+    # 선생님 확인은 "이미지 존재 AND 잠금 버튼이 눌린 경우"에만 활성화되도록 변경
+    sign_val = bool(st.session_state.get(sign_locked_key, False) and st.session_state.get(sign_img_key) is not None)
+
+    c1, c2, c3, c4 = st.columns([1,1,1,1])
+    with c1:
+        # "1교시[국어]" 형식으로 표시
+        st.markdown(f"{period['name']} [{subj_val}]")
+    # 체크 표시들은 모두 가운데 정렬로 표시
+    with c2:
+        if move_val:
+            st.markdown("<div style='display:flex;align-items:center;justify-content:center;height:24px;color:#2e7d32;font-weight:700;'>✔</div>", unsafe_allow_html=True)
+        else:
+            st.markdown("<div style='display:flex;align-items:center;justify-content:center;height:24px;color:#bbb;font-weight:700;'>—</div>", unsafe_allow_html=True)
+    with c3:
+        if ready_val:
+            st.markdown("<div style='display:flex;align-items:center;justify-content:center;height:24px;color:#2e7d32;font-weight:700;'>✔</div>", unsafe_allow_html=True)
+        else:
+            st.markdown("<div style='display:flex;align-items:center;justify-content:center;height:24px;color:#bbb;font-weight:700;'>—</div>", unsafe_allow_html=True)
+    with c4:
+        # 선생님 확인도 가운데 정렬된 초록 체크로 표시 (읽기 전용: 조작 불가)
+        if sign_val:
+            st.markdown("<div style='display:flex;align-items:center;justify-content:center;height:24px;color:#2e7d32;font-weight:700;'>✔</div>", unsafe_allow_html=True)
+        else:
+            st.markdown("<div style='display:flex;align-items:center;justify-content:center;height:24px;color:#bbb;font-weight:700;'>—</div>", unsafe_allow_html=True)

@@ -1,6 +1,7 @@
 import streamlit as st
 from datetime import datetime, time, timedelta
 import uuid
+import pandas as pd
 
 # 제목
 st.title("주말 일과표")
@@ -185,3 +186,44 @@ st.markdown("### 오늘 하루는 어땠나요?")
 comment = st.text_area("", key=f"comment_{date_key}")
 st.session_state["timetable"] = st.session_state.get("timetable", {})
 st.session_state["timetable"][f"{date_key}_comment"] = comment
+
+# 오늘 하루 요약 표 (오전 / 오후)
+st.markdown("### 오늘 하루 요약")
+# 선택한 날짜와 요일을 표시합니다. 예: 2025년 10월 28일(화)
+selected_day_str = f"{selected_date.year}년 {selected_date.month}월 {selected_date.day}일({weekday_labels[selected_date.weekday()]})"
+st.markdown(f"**{selected_day_str}**")
+
+cols = st.columns([1,1])
+with cols[0]:
+    st.subheader("오전")
+    morning_rows = []
+    for item in st.session_state.get(morning_key, []):
+        morning_rows.append({
+            "일과명": item.get("title", ""),
+            "장소명": item.get("place", ""),
+            "시간": item.get("time", ""),
+            "완료": "✅" if item.get("done", False) else "—",
+        })
+    if morning_rows:
+        df_morning = pd.DataFrame(morning_rows)
+        df_morning.index = pd.RangeIndex(start=1, stop=len(df_morning)+1)
+        st.table(df_morning)
+    else:
+        st.write("오전 일정이 없습니다.")
+
+with cols[1]:
+    st.subheader("오후")
+    afternoon_rows = []
+    for item in st.session_state.get(afternoon_key, []):
+        afternoon_rows.append({
+            "일과명": item.get("title", ""),
+            "장소명": item.get("place", ""),
+            "시간": item.get("time", ""),
+            "완료": "✅" if item.get("done", False) else "—",
+        })
+    if afternoon_rows:
+        df_afternoon = pd.DataFrame(afternoon_rows)
+        df_afternoon.index = pd.RangeIndex(start=1, stop=len(df_afternoon)+1)
+        st.table(df_afternoon)
+    else:
+        st.write("오후 일정이 없습니다.")
